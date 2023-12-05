@@ -37,24 +37,40 @@ parameters = {
     "top_k": 40
 }
 
-def get_text(policy, question):
-
-    area = "marine policy"
-
+NOT_FOUND = "1234"
+def get_paragraphs(policy, change):
     prompt = f"""
-    You are an intelligent policy analyst helping on {area}. Strictly Use ONLY the following pieces of context to answer the question at the end.
+    You are an intelligent policy analyst focused on determining if a PROPOSED CHANGE has any impact on a provided POLICY.  
+    Please respond with RELEVANT TEXT extracted from the POLICY verbatim.
+    Only respond with text that has a demonstrated link to the PROPOSED CHANGE.
+    Respond with {NOT_FOUND} if no RELEVANT TEXT can be found.
 
-    Do not try to make up an answer:
-    - If the answer to the question cannot be determined from the context alone, say "I cannot determine the answer to that."
-    - If the context is empty, just say "I do not know the answer to that."
+    PROPOSED CHANGE: {change}
 
-    CONTEXT: 
+    POLICY: {policy}
+    RELEVANT TEXT: 
+    """
+
+    model = TextGenerationModel.from_pretrained("text-bison@001")
+    response = model.predict(
+        prompt,
+        **parameters
+    )
+    return response.text
+
+def get_text(policy, proposal):
+    prompt = f"""
+    You are an intelligent policy analyst helping on determine the IMPACT of a PROPOSED CHANGE on an an EXISTING POLICY.
+    Please quote the relevant portion of the EXISTING POLICY when explaining the IMPACT.
+    Strictly Use ONLY the following pieces of context to determine the IMPACT of the PROPOSED CHANGE.
+
+    EXISTING POLICY: 
     {policy}
 
-    QUESTION:
-    {question}
+    PROPOSED CHANGE:
+    {proposal}
 
-    Helpful Answer:
+    IMPACT:
 
     """
 
@@ -234,13 +250,17 @@ if st.session_state.showTwo:
     st.write(f"Doc: {st.session_state.link}")
     st.write(f"Pages: {len(pages)}")
 
-    p=0
+    SLEEP_TIMEOUT = 5
+    paragraphs = []
     for page in pages:
-        p+=1
-        response = get_text(page, question)
-        st.write(f"Chunk {p}")
-        st.write(response)
-        time.sleep(1)
+        paragraph = get_paragraphs(page, question)
+        if (not paragraph.startswith(NOT_FOUND)):
+            paragraphs.append(paragraph)
+        st.write(paragraph)
+        time.sleep(SLEEP_TIMEOUT)
+
+    response = get_text("\n\n".join(paragraphs), question)
+    st.write(response)
 
 
     # how will this policy change if we remove horns from boats
