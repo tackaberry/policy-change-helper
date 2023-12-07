@@ -37,19 +37,8 @@ parameters = {
     "top_k": 40
 }
 
-NOT_FOUND = "1234"
-def get_paragraphs(policy, change):
-    prompt = f"""
-    You are an intelligent policy analyst focused on determining if a PROPOSED CHANGE has any impact on a provided POLICY.  
-    Please respond with RELEVANT TEXT extracted from the POLICY verbatim.
-    Only respond with text that has a demonstrated link to the PROPOSED CHANGE.
-    Respond with {NOT_FOUND} if no RELEVANT TEXT can be found.
-
-    PROPOSED CHANGE: {change}
-
-    POLICY: {policy}
-    RELEVANT TEXT: 
-    """
+def run_prompt(prompt):
+    # run prompt using vertex ai
 
     model = TextGenerationModel.from_pretrained("text-bison@001")
     response = model.predict(
@@ -58,11 +47,15 @@ def get_paragraphs(policy, change):
     )
     return response.text
 
-def get_text(policy, proposal):
+
+def summarize_policy(policy, proposal):
+    # Run a prompt that will summarize the impact of a proposed change on a policy
+
     prompt = f"""
     You are an intelligent policy analyst helping on determine the IMPACT of a PROPOSED CHANGE on an an EXISTING POLICY.
-    Please quote the relevant portion of the EXISTING POLICY when explaining the IMPACT.
+    Please summarize the relevant portions of the EXISTING POLICY when explaining the IMPACT.
     Strictly Use ONLY the following pieces of context to determine the IMPACT of the PROPOSED CHANGE.
+    Do not respond with  a summary if it is not relevant to the PROPOSED CHANGE.
 
     EXISTING POLICY: 
     {policy}
@@ -74,12 +67,7 @@ def get_text(policy, proposal):
 
     """
 
-    model = TextGenerationModel.from_pretrained("text-bison@001")
-    response = model.predict(
-        prompt,
-        **parameters
-    )
-    return response.text
+    return run_prompt(prompt)
 
 def get_file_content(link):
     # download file from google cloud storage
@@ -252,15 +240,14 @@ if st.session_state.showTwo:
 
     SLEEP_TIMEOUT = 5
     paragraphs = []
-    for page in pages:
-        paragraph = get_paragraphs(page, question)
-        if (not paragraph.startswith(NOT_FOUND)):
+    if len(pages) > 1:
+        for page in pages:
+            paragraph = summarize_policy(page, question)
             paragraphs.append(paragraph)
-        st.write(paragraph)
-        time.sleep(SLEEP_TIMEOUT)
+            st.write(paragraph)
+            time.sleep(SLEEP_TIMEOUT)
+    else:
+        paragraphs.append(pages[0])
 
-    response = get_text("\n\n".join(paragraphs), question)
+    response = summarize_policy("\n\n".join(paragraphs), question)
     st.write(response)
-
-
-    # how will this policy change if we remove horns from boats
