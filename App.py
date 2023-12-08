@@ -47,6 +47,8 @@ def run_prompt(prompt):
     )
     return response.text
 
+def extract_text(policy, proposal):
+    return summarize_policy(policy, proposal)
 
 def summarize_policy(policy, proposal):
     # Run a prompt that will summarize the impact of a proposed change on a policy
@@ -242,7 +244,7 @@ if st.session_state.showTwo:
     paragraphs = []
     if len(pages) > 1:
         for page in pages:
-            paragraph = summarize_policy(page, question)
+            paragraph = extract_text(page, question)
             paragraphs.append(paragraph)
             st.write(paragraph)
             time.sleep(SLEEP_TIMEOUT)
