@@ -129,14 +129,6 @@ def search_sample(
         snippet_spec=discoveryengine.SearchRequest.ContentSearchSpec.SnippetSpec(
             return_snippet=True,
         ),
-        # For information about search summaries, refer to:
-        # https://cloud.google.com/generative-ai-app-builder/docs/get-search-summaries
-        summary_spec=discoveryengine.SearchRequest.ContentSearchSpec.SummarySpec(
-            summary_result_count=5,
-            include_citations=True,
-            ignore_adversarial_query=True,
-            ignore_non_summary_seeking_query=True,
-        ),
     )
 
     # Refer to the `SearchRequest` reference for all supported fields:
@@ -167,7 +159,6 @@ def response_to_df(response):
     firstPage = json.loads(pages[0])
     meta = {
         "totalSize": firstPage["totalSize"],
-        "summary": firstPage["summary"]["summaryText"],
     }
 
 
@@ -219,8 +210,6 @@ if st.session_state.showOne:
     with st.expander("See results", expanded=False):
         st.dataframe(df)
 
-    st.write(meta["summary"])
-
     for row in df.itertuples():
         st.markdown(f"# {row.Title}")
         st.markdown(row.Snippet, unsafe_allow_html=True)
@@ -243,10 +232,13 @@ if st.session_state.showTwo:
     SLEEP_TIMEOUT = 5
     paragraphs = []
     if len(pages) > 1:
+        count = 0
         for page in pages:
+            count += 1
             paragraph = extract_text(page, question)
             paragraphs.append(paragraph)
-            st.write(paragraph)
+            with st.expander(f"Page Summary {count}"):
+                st.write(paragraph)
             time.sleep(SLEEP_TIMEOUT)
     else:
         paragraphs.append(pages[0])
