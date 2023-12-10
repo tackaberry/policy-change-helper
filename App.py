@@ -32,7 +32,7 @@ vertexai.init(project=PROJECT, location=LOCATION)
 parameters = {
     "candidate_count": 1,
     "temperature": 0.2,
-    "max_output_tokens": 256,
+    "max_output_tokens": 8192,
     "top_p": 0.8,
     "top_k": 40
 }
@@ -40,7 +40,7 @@ parameters = {
 def run_prompt(prompt):
     # run prompt using vertex ai
 
-    model = TextGenerationModel.from_pretrained("text-bison@001")
+    model = TextGenerationModel.from_pretrained("text-bison-32k")
     response = model.predict(
         prompt,
         **parameters
@@ -54,9 +54,9 @@ def summarize_policy(policy, proposal):
     # Run a prompt that will summarize the impact of a proposed change on a policy
 
     prompt = f"""
-    You are an intelligent policy analyst helping on determine the IMPACT of a PROPOSED CHANGE on an an EXISTING POLICY.
-    Please summarize the relevant portions of the EXISTING POLICY when explaining the IMPACT.
-    Strictly Use ONLY the following pieces of context to determine the IMPACT of the PROPOSED CHANGE.
+    You are an intelligent policy analyst helping on determine the what are the NEEDED CHANGES to be made to an EXISTING POLICY in order to implement the PROPOSED CHANGE on an an EXISTING POLICY.
+    Please summarize the relevant portions of the EXISTING POLICY when explaining the NEEDED CHANGES.
+    Strictly Use ONLY the following pieces of context to determine the NEEDED CHANGES for the PROPOSED CHANGE.
     Do not respond with  a summary if it is not relevant to the PROPOSED CHANGE.
 
     EXISTING POLICY: 
@@ -65,7 +65,7 @@ def summarize_policy(policy, proposal):
     PROPOSED CHANGE:
     {proposal}
 
-    IMPACT:
+    NEEDED CHANGES:
 
     """
 
@@ -83,12 +83,15 @@ def get_file_content(link):
     chunk = ""
     for page in reader.pages:
 
-        # if length of chunk is greater than 1000 characters, then add it to the list
-        if len(chunk) > 20000:
+        # if length of chunk is greater than 75000 characters, then add it to the list
+        # Max input length = (32k tokens - 8912 output tokens) * 4 chars / token - rounded down to 75000 conservatively 
+        if len(chunk) > 75000:
             chunks.append(chunk)
             chunk = ""
 
         chunk += page.extract_text()
+
+    chunks.append(chunk)
 
     return chunks
 
