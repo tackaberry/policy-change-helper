@@ -37,26 +37,8 @@ parameters = {
     "top_k": 40
 }
 
-def get_text(policy, question):
-
-    area = "marine policy"
-
-    prompt = f"""
-    You are an intelligent policy analyst helping on {area}. Strictly Use ONLY the following pieces of context to answer the question at the end.
-
-    Do not try to make up an answer:
-    - If the answer to the question cannot be determined from the context alone, say "I cannot determine the answer to that."
-    - If the context is empty, just say "I do not know the answer to that."
-
-    CONTEXT: 
-    {policy}
-
-    QUESTION:
-    {question}
-
-    Helpful Answer:
-
-    """
+def run_prompt(prompt):
+    # run prompt using vertex ai
 
     model = TextGenerationModel.from_pretrained("text-bison@001")
     response = model.predict(
@@ -64,6 +46,30 @@ def get_text(policy, question):
         **parameters
     )
     return response.text
+
+def extract_text(policy, proposal):
+    return summarize_policy(policy, proposal)
+
+def summarize_policy(policy, proposal):
+    # Run a prompt that will summarize the impact of a proposed change on a policy
+
+    prompt = f"""
+    You are an intelligent policy analyst helping on determine the IMPACT of a PROPOSED CHANGE on an an EXISTING POLICY.
+    Please summarize the relevant portions of the EXISTING POLICY when explaining the IMPACT.
+    Strictly Use ONLY the following pieces of context to determine the IMPACT of the PROPOSED CHANGE.
+    Do not respond with  a summary if it is not relevant to the PROPOSED CHANGE.
+
+    EXISTING POLICY: 
+    {policy}
+
+    PROPOSED CHANGE:
+    {proposal}
+
+    IMPACT:
+
+    """
+
+    return run_prompt(prompt)
 
 def get_file_content(link):
     # download file from google cloud storage
@@ -234,13 +240,16 @@ if st.session_state.showTwo:
     st.write(f"Doc: {st.session_state.link}")
     st.write(f"Pages: {len(pages)}")
 
-    p=0
-    for page in pages:
-        p+=1
-        response = get_text(page, question)
-        st.write(f"Chunk {p}")
-        st.write(response)
-        time.sleep(1)
+    SLEEP_TIMEOUT = 5
+    paragraphs = []
+    if len(pages) > 1:
+        for page in pages:
+            paragraph = extract_text(page, question)
+            paragraphs.append(paragraph)
+            st.write(paragraph)
+            time.sleep(SLEEP_TIMEOUT)
+    else:
+        paragraphs.append(pages[0])
 
-
-    # how will this policy change if we remove horns from boats
+    response = summarize_policy("\n\n".join(paragraphs), question)
+    st.write(response)
