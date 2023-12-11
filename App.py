@@ -28,19 +28,54 @@ BUCKET = config["BUCKET"]
 
 vertexai.init(project=PROJECT, location=LOCATION)
 
+MODEL_NAME = "text-bison@001"
+TEMPERATURE = 0.2
+MAX_OUTPUT_TOKENS = 256
+TOP_P = 0.8
+TOP_K = 40
 
-parameters = {
-    "candidate_count": 1,
-    "temperature": 0.2,
-    "max_output_tokens": 256,
-    "top_p": 0.8,
-    "top_k": 40
-}
+SUMMARIZE_PROMPT = """
+You are an intelligent policy analyst helping on determine the IMPACT of a PROPOSED CHANGE on an an EXISTING POLICY.
+Please summarize the relevant portions of the EXISTING POLICY when explaining the IMPACT.
+Strictly Use ONLY the following pieces of context to determine the IMPACT of the PROPOSED CHANGE.
+Do not respond with  a summary if it is not relevant to the PROPOSED CHANGE.
+
+EXISTING POLICY: 
+{policy}
+
+PROPOSED CHANGE:
+{proposal}
+
+IMPACT:
+"""
+
+EXTRACT_PROMPT = """
+You are an intelligent policy analyst helping on determine the IMPACT of a PROPOSED CHANGE on an an EXISTING POLICY.
+Please summarize the relevant portions of the EXISTING POLICY when explaining the IMPACT.
+Strictly Use ONLY the following pieces of context to determine the IMPACT of the PROPOSED CHANGE.
+Do not respond with  a summary if it is not relevant to the PROPOSED CHANGE.
+
+EXISTING POLICY: 
+{policy}
+
+PROPOSED CHANGE:
+{proposal}
+
+IMPACT:
+"""
 
 def run_prompt(prompt):
     # run prompt using vertex ai
+    parameters = {
+        "candidate_count": 1,
+        "temperature": st.session_state.temperature,
+        "max_output_tokens": st.session_state.max_output_tokens,
+        "top_p": st.session_state.top_p,
+        "top_k": st.session_state.top_k,
+    }
+    print(parameters)
 
-    model = TextGenerationModel.from_pretrained("text-bison@001")
+    model = TextGenerationModel.from_pretrained(MODEL_NAME)
     response = model.predict(
         prompt,
         **parameters
@@ -48,27 +83,13 @@ def run_prompt(prompt):
     return response.text
 
 def extract_text(policy, proposal):
-    return summarize_policy(policy, proposal)
+    extract_prompt = st.session_state.extract_prompt
+    prompt = extract_prompt.format(policy=policy, proposal=proposal)
+    return run_prompt(prompt)
 
 def summarize_policy(policy, proposal):
-    # Run a prompt that will summarize the impact of a proposed change on a policy
-
-    prompt = f"""
-    You are an intelligent policy analyst helping on determine the IMPACT of a PROPOSED CHANGE on an an EXISTING POLICY.
-    Please summarize the relevant portions of the EXISTING POLICY when explaining the IMPACT.
-    Strictly Use ONLY the following pieces of context to determine the IMPACT of the PROPOSED CHANGE.
-    Do not respond with  a summary if it is not relevant to the PROPOSED CHANGE.
-
-    EXISTING POLICY: 
-    {policy}
-
-    PROPOSED CHANGE:
-    {proposal}
-
-    IMPACT:
-
-    """
-
+    summarize_prompt = st.session_state.summarize_prompt
+    prompt = summarize_prompt.format(policy=policy, proposal=proposal)
     return run_prompt(prompt)
 
 def get_file_content(link):
@@ -80,15 +101,21 @@ def get_file_content(link):
     reader = PdfReader('temp.pdf') 
 
     chunks = []
+    range = []
+    p = 1
     chunk = ""
     for page in reader.pages:
 
         # if length of chunk is greater than 1000 characters, then add it to the list
         if len(chunk) > 20000:
-            chunks.append(chunk)
+            chunks.append([chunk,range])
+            range = []
             chunk = ""
 
         chunk += page.extract_text()
+        range.append(p)
+        p += 1
+
 
     return chunks
 
@@ -195,9 +222,6 @@ if "showTwo" not in st.session_state:
 st.title('Policy Helper')
 question=st.text_input("Outline your search or policy change")
 
-if not question:
-    st.warning("Please enter a question.")
-
 if question:
     if st.session_state.showTwo:
         st.session_state.showOne = False
@@ -205,10 +229,42 @@ if question:
         st.session_state.showOne = True
 
 
-def analyze_this(link, question):
+def analyze_this(link):
     st.session_state.link = link
     st.session_state.showOne = False
     st.session_state.showTwo = True
+
+def back_to_results():
+    st.session_state.showOne = True
+    st.session_state.showTwo = False
+
+with st.sidebar:
+    st.markdown("# Settings")
+    
+    summarize_prompt = st.text_area("Summarize Prompt", value=SUMMARIZE_PROMPT)
+    st.session_state.summarize_prompt = summarize_prompt
+
+    extract_prompt = st.text_area("Extract Prompt", value=EXTRACT_PROMPT)
+    st.session_state.extract_prompt = extract_prompt
+
+    temperature = st.slider(
+        "Temperature:",
+        min_value=0.0,
+        max_value=1.0,
+        value=TEMPERATURE,
+    )
+    st.session_state.temperature = temperature
+
+    top_p = st.slider('Top P:', min_value=0.0, max_value=1.0, value=TOP_P)
+    st.session_state.top_p = top_p
+
+    top_k = st.slider('Top K:', min_value=0, max_value=40, value=TOP_K)
+    st.session_state.top_k = top_k
+
+    max_output_tokens = st.slider(
+        "Max Output Tokens:", min_value=0, max_value=1000, value=MAX_OUTPUT_TOKENS
+    )
+    st.session_state.max_output_tokens = max_output_tokens
 
 
 if st.session_state.showOne:
@@ -224,32 +280,33 @@ if st.session_state.showOne:
     for row in df.itertuples():
         st.markdown(f"# {row.Title}")
         st.markdown(row.Snippet, unsafe_allow_html=True)
-        st.button("Analyze this", key=row.Id, on_click=analyze_this, args=(row.Link, question))
+        st.button("Analyze this", key=row.Id, on_click=analyze_this, args=(row.Link,))
         st.divider()
         
 if st.session_state.showTwo:
 
+    st.button( "Back", on_click=back_to_results )
+
     st.markdown(f"# {st.session_state.link}")
 
-    st.write(st.session_state.link)
-
-    params = st.experimental_get_query_params()
-
-    pages = get_file_content(st.session_state.link)
+    chunks = get_file_content(st.session_state.link)
 
     st.write(f"Doc: {st.session_state.link}")
-    st.write(f"Pages: {len(pages)}")
+    st.write(f"Chunks: {len(chunks)}")
 
     SLEEP_TIMEOUT = 5
     paragraphs = []
-    if len(pages) > 1:
-        for page in pages:
-            paragraph = extract_text(page, question)
+    if len(chunks) > 1:
+        for chunk in chunks:
+            text = chunk[0]
+            paragraph = extract_text(text, question)
             paragraphs.append(paragraph)
+            st.write( "Pages: {first} - {last}".format(first=str(chunk[1][0]), last=str(chunk[1][-1])) )
             st.write(paragraph)
+            st.divider()
             time.sleep(SLEEP_TIMEOUT)
     else:
-        paragraphs.append(pages[0])
+        paragraphs.append(chunks[0])
 
     response = summarize_policy("\n\n".join(paragraphs), question)
     st.write(response)
