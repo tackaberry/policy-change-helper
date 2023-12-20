@@ -71,7 +71,6 @@ def run_prompt(prompt):
         "top_p": st.session_state.top_p,
         "top_k": st.session_state.top_k,
     }
-    print(parameters)
 
     model = TextGenerationModel.from_pretrained(MODEL_NAME)
     response = model.predict(
