@@ -103,8 +103,8 @@ def get_file_content(link):
     chunk = ""
     for page in reader.pages:
 
-        # if length of chunk is greater than 1000 characters, then add it to the list
-        if len(chunk) > 20000:
+        # if length of chunk is greater than 75000 characters, then add it to the list
+        if len(chunk) > 75000:
             chunks.append([chunk,range])
             range = []
             chunk = ""
