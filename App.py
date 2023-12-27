@@ -285,7 +285,8 @@ if st.session_state.showTwo:
         st.write(f"Chunks: {len(chunks)}")
 
         SLEEP_TIMEOUT = 5
-        paragraphs = []
+    
+    paragraphs = []
 
     breakdown, summary = st.tabs(["Page Breakdown", "Summary"])
 
