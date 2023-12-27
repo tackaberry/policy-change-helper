@@ -275,26 +275,40 @@ if st.session_state.showTwo:
 
     st.button( "Back", on_click=back_to_results )
 
-    st.markdown(f"# {st.session_state.link}")
+    chunks = []
+    with st.spinner("Loading document..."):
+        st.markdown(f"# {st.session_state.link}")
 
-    chunks = get_file_content(st.session_state.link)
+        chunks = get_file_content(st.session_state.link)
 
-    st.write(f"Doc: {st.session_state.link}")
-    st.write(f"Chunks: {len(chunks)}")
+        st.write(f"Doc: {st.session_state.link}")
+        st.write(f"Chunks: {len(chunks)}")
 
-    SLEEP_TIMEOUT = 5
-    paragraphs = []
+        SLEEP_TIMEOUT = 5
+        paragraphs = []
+
+    breakdown, summary = st.tabs(["Page Breakdown", "Summary"])
+
     if len(chunks) > 1:
-        for chunk in chunks:
-            text = chunk[0]
-            paragraph = extract_text(text, question)
-            paragraphs.append(paragraph)
-            st.write( "Pages: {first} - {last}".format(first=str(chunk[1][0]), last=str(chunk[1][-1])) )
-            st.write(paragraph)
-            st.divider()
-            time.sleep(SLEEP_TIMEOUT)
+        chunk_count = 1
+        with breakdown:
+            for chunk in chunks:
+                with st.spinner(f"Analyzing chunk #{chunk_count}"):
+                    chunk_count += 1
+                    text = chunk[0]
+                    paragraph = extract_text(text, question)
+                    paragraphs.append(paragraph)
+                    st.write( "Pages: {first} - {last}".format(first=str(chunk[1][0]), last=str(chunk[1][-1])) )
+                    st.write(paragraph)
+                    st.divider()
+                time.sleep(SLEEP_TIMEOUT)
     else:
         paragraphs.append(chunks[0])
-
-    response = summarize_policy("\n\n".join(paragraphs), question)
-    st.write(response)
+        with breakdown:
+            with st.spinner("Analyzing..."):
+                st.write("Summary is ready")
+    
+    with summary:
+        with st.spinner("Analyzing..."):
+            response = summarize_policy("\n\n".join(paragraphs), question)
+            st.write(response)
