@@ -1,5 +1,6 @@
 # import libraries
 import streamlit as st
+from streamlit import session_state as ss
 import json
 from dotenv import dotenv_values
 import vertexai
@@ -34,32 +35,34 @@ MAX_OUTPUT_TOKENS = 8192
 TOP_P = 0.8
 TOP_K = 40
 
-SUMMARIZE_PROMPT = """You are an intelligent policy analyst helping on determine what are the NEEDED CHANGES to be made to an EXISTING POLICY in order to implement the PROPOSED CHANGE on an an EXISTING POLICY.
-Please summarize the relevant portions of the EXISTING POLICY when explaining the NEEDED CHANGES.
-Strictly Use ONLY the following pieces of context to determine the NEEDED CHANGES for the PROPOSED CHANGE.
-Do not respond with  a summary if it is not relevant to the PROPOSED CHANGE.
+SUMMARIZE_PROMPT = """Please create a summary for the TEXT TO SUMMARIZE.
 
-EXISTING POLICY: 
-{policy}
+Combine all of the points under the followign sections
 
-PROPOSED CHANGE:
-{proposal}
+Commonalities in DOCUMENT 1 and DOCUMENT 2
+Contradictions in DOCUMENT 1 and DOCUMENT 2
 
-NEEDED CHANGES:
+Exclude any points that state that something is in one document but not the other.
+
+TEXT TO SUMMARIZE:
+{text}
+
+OUTPUT: 
 """
 
-EXTRACT_PROMPT = """You are an intelligent policy analyst helping on determine what are the NEEDED CHANGES to be made to an EXISTING POLICY in order to implement the PROPOSED CHANGE on an an EXISTING POLICY.
-Please summarize the relevant portions of the EXISTING POLICY when explaining the NEEDED CHANGES.
-Strictly Use ONLY the following pieces of context to determine the NEEDED CHANGES for the PROPOSED CHANGE.
-Do not respond with  a summary if it is not relevant to the PROPOSED CHANGE.
+COMPARE_PROMPT = """Please compare DOCUMENT 1 to DOCUMENT 2 to list commonalities and contradictions.  These documents are portions of two larger distinct documents.  
+Summarize your findings in bulleted lists with your output organized in the following sections:
 
-EXISTING POLICY: 
-{policy}
+Commonalities in DOCUMENT 1 and DOCUMENT 2
+Contradictions in DOCUMENT 1 and DOCUMENT 2
 
-PROPOSED CHANGE:
-{proposal}
+DOCUMENT 1: 
+{doc1}
 
-NEEDED CHANGES:
+DOCUMENT 2: 
+{doc2}
+
+OUTPUT:
 """
 
 def run_prompt(prompt):
@@ -79,15 +82,22 @@ def run_prompt(prompt):
     )
     return response.text
 
-def extract_text(policy, proposal):
-    extract_prompt = st.session_state.extract_prompt
-    prompt = extract_prompt.format(policy=policy, proposal=proposal)
+def compare_text(doc1, doc2):
+    compare_prompt = st.session_state.compare_prompt
+    prompt = compare_prompt.format(doc1=doc1, doc2=doc2)
     return run_prompt(prompt)
 
-def summarize_policy(policy, proposal):
+def summarize(text):
     summarize_prompt = st.session_state.summarize_prompt
-    prompt = summarize_prompt.format(policy=policy, proposal=proposal)
+    prompt = summarize_prompt.format(text=text)
     return run_prompt(prompt)
+
+def get_file_size(link):
+    # Get file size from cloud storage
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(BUCKET)
+    blob = bucket.get_blob(link.replace(f"gs://{BUCKET}",""))
+    return blob.size
 
 def get_file_content(link):
     # download file from google cloud storage
@@ -103,8 +113,8 @@ def get_file_content(link):
     chunk = ""
     for page in reader.pages:
 
-        # if length of chunk is greater than 75000 characters, then add it to the list
-        if len(chunk) > 75000:
+        # if length of chunk is greater than 30000 characters, then add it to the list
+        if len(chunk) > 30000:
             chunks.append([chunk,range])
             range = []
             chunk = ""
@@ -177,7 +187,7 @@ def search_sample(
     return response
 
 def response_to_df(response):
-
+    
     df = pd.DataFrame(columns=['Id', 'Page', 'Title','Link','Snippet'])
 
     pages = tuple(search_service.SearchResponse.to_json(x) for x in response.pages)
@@ -203,30 +213,20 @@ def response_to_df(response):
 
     return [df,meta]
 
-if "showOne" not in st.session_state:
-    st.session_state.showOne = False
-if "showTwo" not in st.session_state:
-    st.session_state.showTwo = False
 
+st.title('Document Compare Helper')
+question=st.text_input("What sort of document are you looking for?")
 
-st.title('Policy Helper')
-question=st.text_input("Outline your search or policy change")
+def search():
+    ss["search_response"] = search_sample(PROJECT, "global", DATASTORE, question)
+    ss["search_df"], ss["search_meta"] = response_to_df(ss["search_response"])
 
 if question:
-    if st.session_state.showTwo:
-        st.session_state.showOne = False
-    else:
-        st.session_state.showOne = True
-
-
-def analyze_this(link):
-    st.session_state.link = link
-    st.session_state.showOne = False
-    st.session_state.showTwo = True
+    search()
 
 def back_to_results():
-    st.session_state.showOne = True
-    st.session_state.showTwo = False
+    ss.doc1 = None
+    ss.doc2 = None
 
 with st.sidebar:
     st.markdown("# Settings")
@@ -234,8 +234,8 @@ with st.sidebar:
     summarize_prompt = st.text_area("Summarize Prompt", value=SUMMARIZE_PROMPT)
     st.session_state.summarize_prompt = summarize_prompt
 
-    extract_prompt = st.text_area("Extract Prompt", value=EXTRACT_PROMPT)
-    st.session_state.extract_prompt = extract_prompt
+    compare_prompt = st.text_area("Compare Prompt", value=COMPARE_PROMPT)
+    st.session_state.compare_prompt = compare_prompt
 
     temperature = st.slider(
         "Temperature:",
@@ -256,33 +256,59 @@ with st.sidebar:
     )
     st.session_state.max_output_tokens = max_output_tokens
 
+def show_file_selection():
+    return "search_response" in ss \
+        and ("doc1" not in ss or ss["doc1"] is None) \
+        and ("doc2" not in ss or ss["doc2"] is  None)
 
-if st.session_state.showOne:
-
-    response2 = search_sample(PROJECT, "global", DATASTORE, question)
-    [df, meta] = response_to_df(response2)
+if show_file_selection():
+    df = ss["search_df"]
+    meta = ss["search_meta"]
 
     with st.expander("See results", expanded=False):
         st.dataframe(df)
 
-    for row in df.itertuples():
-        st.markdown(f"# {row.Title}")
-        st.markdown(row.Snippet, unsafe_allow_html=True)
-        st.button("Analyze this", key=row.Id, on_click=analyze_this, args=(row.Link,))
-        st.divider()
+    rows = [row for row in df.itertuples()]
+    with st.form("file_selection"):
+        left, right = st.columns(2)
+        with left:
+            st.radio("First document to compare", 
+                        map(lambda x: x.Link, rows),
+                        key="doc1",
+                        # captions=map(lambda x: str(get_file_size(x.Link)/(1024*1024)) + " MB", rows),
+                        index=None,)
         
-if st.session_state.showTwo:
+        with right:
+            st.radio("Second document to compare", 
+                        map(lambda x: x.Link, rows),
+                        key="doc2",
+                        # captions=map(lambda x: str(get_file_size(x.Link)/(1024*1024)) + " MB", rows),
+                        index=None,)
+        st.form_submit_button("Compare")
 
+def show_analysis():
+    return ("doc1" in ss and ss["doc1"] is not None) and ("doc2" in ss and ss["doc2"] is not None)
+
+if show_analysis():
     st.button( "Back", on_click=back_to_results )
 
-    chunks = []
-    with st.spinner("Loading document..."):
-        st.markdown(f"# {st.session_state.link}")
+    doc1_chunks = []
+    doc2_chunks = []
+    
+    with st.spinner("Loading documents..."):
 
-        chunks = get_file_content(st.session_state.link)
+        doc1_chunks = get_file_content(st.session_state.doc1)
+        doc2_chunks = get_file_content(st.session_state.doc2)
 
-        st.write(f"Doc: {st.session_state.link}")
-        st.write(f"Chunks: {len(chunks)}")
+        st.markdown(f"# {st.session_state.doc1} - {st.session_state.doc2}")
+        left, right = st.columns(2)
+        with left:
+            st.write(f"Doc: {st.session_state.doc1}")
+            st.write(f"Chunks: {len(doc1_chunks)}")
+        
+        with right:
+            st.write(f"Doc: {st.session_state.doc2}")
+            st.write(f"Chunks: {len(doc2_chunks)}")
 
         SLEEP_TIMEOUT = 5
     
@@ -290,26 +316,28 @@ if st.session_state.showTwo:
 
     breakdown, summary = st.tabs(["Page Breakdown", "Summary"])
 
-    if len(chunks) > 1:
-        chunk_count = 1
-        with breakdown:
-            for chunk in chunks:
-                with st.spinner(f"Analyzing chunk #{chunk_count}"):
-                    chunk_count += 1
-                    text = chunk[0]
-                    paragraph = extract_text(text, question)
+    doc1_chunk_count = 1
+    with breakdown:
+        for chunk1 in doc1_chunks:
+            doc2_chunk_count = 1
+            text1 = chunk1[0]
+
+            for chunk2 in doc2_chunks:
+
+                with st.spinner(f"Comparing document 1 chunk #{doc1_chunk_count} - doc 2 chunk #{doc2_chunk_count}"):
+                    text2 = chunk2[0]
+                    paragraph = compare_text(text1, text2)
                     paragraphs.append(paragraph)
-                    st.write( "Pages: {first} - {last}".format(first=str(chunk[1][0]), last=str(chunk[1][-1])) )
+                    st.write( "Document 1 Pages: {first} - {last}".format(first=str(chunk1[1][0]), last=str(chunk1[1][-1])) )
+                    st.write( "Document 2 Pages: {first} - {last}".format(first=str(chunk2[1][0]), last=str(chunk2[1][-1])) )
                     st.write(paragraph)
                     st.divider()
-                time.sleep(SLEEP_TIMEOUT)
-    else:
-        paragraphs.append(chunks[0])
-        with breakdown:
-            with st.spinner("Analyzing..."):
-                st.write("Summary is ready")
+                    time.sleep(SLEEP_TIMEOUT)
+            
+                doc2_chunk_count += 1
+            doc1_chunk_count += 1
     
     with summary:
         with st.spinner("Analyzing..."):
-            response = summarize_policy("\n\n".join(paragraphs), question)
+            response = summarize("\n\n".join(paragraphs))
             st.write(response)
