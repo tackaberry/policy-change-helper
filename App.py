@@ -28,16 +28,15 @@ BUCKET = config["BUCKET"]
 
 vertexai.init(project=PROJECT, location=LOCATION)
 
-MODEL_NAME = "text-bison@001"
+MODEL_NAME = "text-bison-32k"
 TEMPERATURE = 0.2
-MAX_OUTPUT_TOKENS = 256
+MAX_OUTPUT_TOKENS = 8192
 TOP_P = 0.8
 TOP_K = 40
 
-SUMMARIZE_PROMPT = """
-You are an intelligent policy analyst helping on determine the IMPACT of a PROPOSED CHANGE on an an EXISTING POLICY.
-Please summarize the relevant portions of the EXISTING POLICY when explaining the IMPACT.
-Strictly Use ONLY the following pieces of context to determine the IMPACT of the PROPOSED CHANGE.
+SUMMARIZE_PROMPT = """You are an intelligent policy analyst helping on determine what are the NEEDED CHANGES to be made to an EXISTING POLICY in order to implement the PROPOSED CHANGE on an an EXISTING POLICY.
+Please summarize the relevant portions of the EXISTING POLICY when explaining the NEEDED CHANGES.
+Strictly Use ONLY the following pieces of context to determine the NEEDED CHANGES for the PROPOSED CHANGE.
 Do not respond with  a summary if it is not relevant to the PROPOSED CHANGE.
 
 EXISTING POLICY: 
@@ -46,13 +45,12 @@ EXISTING POLICY:
 PROPOSED CHANGE:
 {proposal}
 
-IMPACT:
+NEEDED CHANGES:
 """
 
-EXTRACT_PROMPT = """
-You are an intelligent policy analyst helping on determine the IMPACT of a PROPOSED CHANGE on an an EXISTING POLICY.
-Please summarize the relevant portions of the EXISTING POLICY when explaining the IMPACT.
-Strictly Use ONLY the following pieces of context to determine the IMPACT of the PROPOSED CHANGE.
+EXTRACT_PROMPT = """You are an intelligent policy analyst helping on determine what are the NEEDED CHANGES to be made to an EXISTING POLICY in order to implement the PROPOSED CHANGE on an an EXISTING POLICY.
+Please summarize the relevant portions of the EXISTING POLICY when explaining the NEEDED CHANGES.
+Strictly Use ONLY the following pieces of context to determine the NEEDED CHANGES for the PROPOSED CHANGE.
 Do not respond with  a summary if it is not relevant to the PROPOSED CHANGE.
 
 EXISTING POLICY: 
@@ -61,7 +59,7 @@ EXISTING POLICY:
 PROPOSED CHANGE:
 {proposal}
 
-IMPACT:
+NEEDED CHANGES:
 """
 
 def run_prompt(prompt):
@@ -73,7 +71,6 @@ def run_prompt(prompt):
         "top_p": st.session_state.top_p,
         "top_k": st.session_state.top_k,
     }
-    print(parameters)
 
     model = TextGenerationModel.from_pretrained(MODEL_NAME)
     response = model.predict(
@@ -106,8 +103,8 @@ def get_file_content(link):
     chunk = ""
     for page in reader.pages:
 
-        # if length of chunk is greater than 1000 characters, then add it to the list
-        if len(chunk) > 20000:
+        # if length of chunk is greater than 75000 characters, then add it to the list
+        if len(chunk) > 75000:
             chunks.append([chunk,range])
             range = []
             chunk = ""
@@ -116,6 +113,8 @@ def get_file_content(link):
         range.append(p)
         p += 1
 
+
+    chunks.append(chunk)
 
     return chunks
 
@@ -156,14 +155,6 @@ def search_sample(
         snippet_spec=discoveryengine.SearchRequest.ContentSearchSpec.SnippetSpec(
             return_snippet=True,
         ),
-        # For information about search summaries, refer to:
-        # https://cloud.google.com/generative-ai-app-builder/docs/get-search-summaries
-        summary_spec=discoveryengine.SearchRequest.ContentSearchSpec.SummarySpec(
-            summary_result_count=5,
-            include_citations=True,
-            ignore_adversarial_query=True,
-            ignore_non_summary_seeking_query=True,
-        ),
     )
 
     # Refer to the `SearchRequest` reference for all supported fields:
@@ -194,7 +185,6 @@ def response_to_df(response):
     firstPage = json.loads(pages[0])
     meta = {
         "totalSize": firstPage["totalSize"],
-        "summary": firstPage["summary"]["summaryText"],
     }
 
 
@@ -275,8 +265,6 @@ if st.session_state.showOne:
     with st.expander("See results", expanded=False):
         st.dataframe(df)
 
-    st.write(meta["summary"])
-
     for row in df.itertuples():
         st.markdown(f"# {row.Title}")
         st.markdown(row.Snippet, unsafe_allow_html=True)
@@ -287,26 +275,41 @@ if st.session_state.showTwo:
 
     st.button( "Back", on_click=back_to_results )
 
-    st.markdown(f"# {st.session_state.link}")
+    chunks = []
+    with st.spinner("Loading document..."):
+        st.markdown(f"# {st.session_state.link}")
 
-    chunks = get_file_content(st.session_state.link)
+        chunks = get_file_content(st.session_state.link)
 
-    st.write(f"Doc: {st.session_state.link}")
-    st.write(f"Chunks: {len(chunks)}")
+        st.write(f"Doc: {st.session_state.link}")
+        st.write(f"Chunks: {len(chunks)}")
 
-    SLEEP_TIMEOUT = 5
+        SLEEP_TIMEOUT = 5
+    
     paragraphs = []
+
+    breakdown, summary = st.tabs(["Page Breakdown", "Summary"])
+
     if len(chunks) > 1:
-        for chunk in chunks:
-            text = chunk[0]
-            paragraph = extract_text(text, question)
-            paragraphs.append(paragraph)
-            st.write( "Pages: {first} - {last}".format(first=str(chunk[1][0]), last=str(chunk[1][-1])) )
-            st.write(paragraph)
-            st.divider()
-            time.sleep(SLEEP_TIMEOUT)
+        chunk_count = 1
+        with breakdown:
+            for chunk in chunks:
+                with st.spinner(f"Analyzing chunk #{chunk_count}"):
+                    chunk_count += 1
+                    text = chunk[0]
+                    paragraph = extract_text(text, question)
+                    paragraphs.append(paragraph)
+                    st.write( "Pages: {first} - {last}".format(first=str(chunk[1][0]), last=str(chunk[1][-1])) )
+                    st.write(paragraph)
+                    st.divider()
+                time.sleep(SLEEP_TIMEOUT)
     else:
         paragraphs.append(chunks[0])
-
-    response = summarize_policy("\n\n".join(paragraphs), question)
-    st.write(response)
+        with breakdown:
+            with st.spinner("Analyzing..."):
+                st.write("Summary is ready")
+    
+    with summary:
+        with st.spinner("Analyzing..."):
+            response = summarize_policy("\n\n".join(paragraphs), question)
+            st.write(response)
