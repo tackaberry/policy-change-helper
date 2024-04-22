@@ -29,3 +29,18 @@ gcloud auth application-default login
 streamlit run App.py
 ```
 
+## Docker
+Set the env var `GOOGLE_APPLICATION_CREDENTIALS` to the credentials file created on `gcloud auth application-default login` (usually somewhere in ~/.config/gcloud/...)
+
+```bash
+# Build
+docker build -t cloudrun-policy-change-helper:latest .
+
+# Run
+docker run --rm -it -p 8080:8080 \
+-e GOOGLE_APPLICATION_CREDENTIALS=/tmp/keys/google_auth.json \
+-v $GOOGLE_APPLICATION_CREDENTIALS:/tmp/keys/google_auth.json:ro \
+cloudrun-policy-change-helper:latest
+```
+
+Visit localhost:8080
