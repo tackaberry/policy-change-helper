@@ -1,34 +1,61 @@
 # import libraries
 import streamlit as st
+
 import json
 from dotenv import dotenv_values
 import vertexai
 
 from vertexai.language_models import TextGenerationModel
+from vertexai.preview.generative_models import GenerativeModel, Part
+import vertexai.preview.generative_models as generative_models
 
 from google.cloud import storage
 from google.api_core.client_options import ClientOptions
 from google.cloud import discoveryengine_v1 as discoveryengine
 from google.cloud.discoveryengine_v1.types import common, search_service
+from StreamlitGauth.google_auth import Google_auth
 
 from dotenv import dotenv_values
 from PyPDF2 import PdfReader 
 import time
 
-
 import pandas as pd
+import os
+
+import urllib.parse
 
 
-config = dotenv_values(".env")
+session = st.runtime.get_instance()._session_mgr.list_active_sessions()[0]
+st_base_url = urllib.parse.urlunparse([session.client.request.protocol, session.client.request.host, "", "", "", ""])
 
-PROJECT = config["PROJECT"]
-LOCATION = config["LOCATION"]
-DATASTORE = config["DATASTORE"]
-BUCKET = config["BUCKET"]
+PROJECT = os.environ.get('PROJECT')
+LOCATION = os.environ.get("LOCATION")
+DATASTORE = os.environ.get("DATASTORE")
+BUCKET = os.environ.get("BUCKET")
 
+CLIENT_ID = os.environ.get("CLIENT_ID")
+CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
+
+# Define the scopes required for your app
+scopes = ['openid', 'email', 'profile']
+
+redirect_uri = os.environ.get("REDIRECT_URI")
+redirect_uri = redirect_uri or st_base_url
+
+if 'login' not in st.session_state or "authenticated" not in st.session_state.login:
+    st.session_state.login = Google_auth(clientId=CLIENT_ID, clientSecret=CLIENT_SECRET, redirect_uri=redirect_uri)
+
+    if st.session_state.login is not None and "authenticated" in st.session_state.login:
+        # your streamlit applciation
+        pass
+
+    else:
+        st.stop()
+           
 vertexai.init(project=PROJECT, location=LOCATION)
 
-MODEL_NAME = "text-bison-32k"
+MODEL_NAME = "gemini-1.5-pro-preview-0215"
+TOTAL_TOKENS = 1000000
 TEMPERATURE = 0.2
 MAX_OUTPUT_TOKENS = 8192
 TOP_P = 0.8
@@ -62,7 +89,34 @@ PROPOSED CHANGE:
 NEEDED CHANGES:
 """
 
+def run_prompt_preview(prompt):
+    vertexai.init(project=PROJECT, location=LOCATION)
+    model = GenerativeModel(MODEL_NAME)
+    responses = model.generate_content(
+        prompt,
+        generation_config={
+            "max_output_tokens": st.session_state.max_output_tokens,
+            "temperature": st.session_state.temperature,
+            "top_p": st.session_state.top_p
+        },
+        safety_settings={
+            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        },
+        stream=True,
+    )
+    full_response = ""
+    for response in responses:
+        full_response += response.text
+
+    return full_response
+
 def run_prompt(prompt):
+    # use preview approach for preview models
+    if (MODEL_NAME in ["gemini-1.5-pro-preview-0215"]):
+        return run_prompt_preview(prompt)
     # run prompt using vertex ai
     parameters = {
         "candidate_count": 1,
@@ -101,10 +155,11 @@ def get_file_content(link):
     range = []
     p = 1
     chunk = ""
+    token_size = (TOTAL_TOKENS - st.session_state.max_output_tokens) * 4
     for page in reader.pages:
 
-        # if length of chunk is greater than 75000 characters, then add it to the list
-        if len(chunk) > 75000:
+        # if length of chunk is greater than 15000 characters, then add it to the list
+        if len(chunk) > token_size:
             chunks.append([chunk,range])
             range = []
             chunk = ""
