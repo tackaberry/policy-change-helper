@@ -1,7 +1,7 @@
 # import libraries
 import streamlit as st
 import json
-from dotenv import dotenv_values
+from dotenv import load_dotenv
 import vertexai
 
 from vertexai.language_models import TextGenerationModel
@@ -13,7 +13,6 @@ from google.api_core.client_options import ClientOptions
 from google.cloud import discoveryengine_v1 as discoveryengine
 from google.cloud.discoveryengine_v1.types import common, search_service
 
-from dotenv import dotenv_values
 from PyPDF2 import PdfReader 
 import time
 
@@ -25,37 +24,36 @@ import urllib.parse
 session = st.runtime.get_instance()._session_mgr.list_active_sessions()[0]
 st_base_url = urllib.parse.urlunparse([session.client.request.protocol, session.client.request.host, "", "", "", ""])
 
+load_dotenv()
 PROJECT = os.environ.get('PROJECT')
 LOCATION = os.environ.get("LOCATION")
 DATASTORE = os.environ.get("DATASTORE")
 BUCKET = os.environ.get("BUCKET")
+MODEL_NAME = os.environ.get("MODEL", "gemini-1.5-pro-preview-0409")
+TOTAL_TOKENS = int(os.environ.get("TOTAL_TOKENS", 1000000))
 
+
+AUTH_ENABLED = os.environ.get("AUTH", False)
 CLIENT_ID = os.environ.get("CLIENT_ID")
 CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
 
-# Define the scopes required for your app
-scopes = ['openid', 'email', 'profile']
+# Optional authentication
+if AUTH_ENABLED:
+    from StreamlitGauth.google_auth import Google_auth
+    redirect_uri = os.environ.get("REDIRECT_URI")
+    redirect_uri = redirect_uri or st_base_url
+    if 'login' not in st.session_state or "authenticated" not in st.session_state.login:
+        st.session_state.login = Google_auth(clientId=CLIENT_ID, clientSecret=CLIENT_SECRET, redirect_uri=redirect_uri)
 
-import streamlit as st
-from StreamlitGauth.google_auth import Google_auth
+        if st.session_state.login is not None and "authenticated" in st.session_state.login:
+            # your streamlit applciation
+            pass
 
-redirect_uri = os.environ.get("REDIRECT_URI")
-redirect_uri = redirect_uri or st_base_url
-
-if 'login' not in st.session_state or "authenticated" not in st.session_state.login:
-    st.session_state.login = Google_auth(clientId=CLIENT_ID, clientSecret=CLIENT_SECRET, redirect_uri=redirect_uri)
-
-    if st.session_state.login is not None and "authenticated" in st.session_state.login:
-        # your streamlit applciation
-        pass
-
-    else:
-        st.stop()
+        else:
+            st.stop()
            
 vertexai.init(project=PROJECT, location=LOCATION)
 
-MODEL_NAME = "gemini-1.5-pro-preview-0215"
-TOTAL_TOKENS = 1000000
 TEMPERATURE = 0.2
 MAX_OUTPUT_TOKENS = 8192
 TOP_P = 0.8
@@ -93,7 +91,7 @@ def run_prompt_preview(prompt):
     vertexai.init(project=PROJECT, location=LOCATION)
     model = GenerativeModel(MODEL_NAME)
     responses = model.generate_content(
-        prompt,
+        [prompt],
         generation_config={
             "max_output_tokens": st.session_state.max_output_tokens,
             "temperature": st.session_state.temperature,
@@ -115,8 +113,9 @@ def run_prompt_preview(prompt):
 
 def run_prompt(prompt):
     # use preview approach for preview models
-    if (MODEL_NAME in ["gemini-1.5-pro-preview-0215"]):
+    if ("gemini" in MODEL_NAME):
         return run_prompt_preview(prompt)
+
     # run prompt using vertex ai
     parameters = {
         "candidate_count": 1,
