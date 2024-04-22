@@ -1,11 +1,12 @@
 # import libraries
 import streamlit as st
-from streamlit import session_state as ss
 import json
 from dotenv import dotenv_values
 import vertexai
 
 from vertexai.language_models import TextGenerationModel
+from vertexai.preview.generative_models import GenerativeModel, Part
+import vertexai.preview.generative_models as generative_models
 
 from google.cloud import storage
 from google.api_core.client_options import ClientOptions
@@ -16,56 +17,106 @@ from dotenv import dotenv_values
 from PyPDF2 import PdfReader 
 import time
 
-
 import pandas as pd
+import os
 
+import urllib.parse
 
-config = dotenv_values(".env")
+session = st.runtime.get_instance()._session_mgr.list_active_sessions()[0]
+st_base_url = urllib.parse.urlunparse([session.client.request.protocol, session.client.request.host, "", "", "", ""])
 
-PROJECT = config["PROJECT"]
-LOCATION = config["LOCATION"]
-DATASTORE = config["DATASTORE"]
-BUCKET = config["BUCKET"]
+PROJECT = os.environ.get('PROJECT')
+LOCATION = os.environ.get("LOCATION")
+DATASTORE = os.environ.get("DATASTORE")
+BUCKET = os.environ.get("BUCKET")
 
+CLIENT_ID = os.environ.get("CLIENT_ID")
+CLIENT_SECRET = os.environ.get("CLIENT_SECRET")
+
+# Define the scopes required for your app
+scopes = ['openid', 'email', 'profile']
+
+import streamlit as st
+from StreamlitGauth.google_auth import Google_auth
+
+redirect_uri = os.environ.get("REDIRECT_URI")
+redirect_uri = redirect_uri or st_base_url
+
+if 'login' not in st.session_state or "authenticated" not in st.session_state.login:
+    st.session_state.login = Google_auth(clientId=CLIENT_ID, clientSecret=CLIENT_SECRET, redirect_uri=redirect_uri)
+
+    if st.session_state.login is not None and "authenticated" in st.session_state.login:
+        # your streamlit applciation
+        pass
+
+    else:
+        st.stop()
+           
 vertexai.init(project=PROJECT, location=LOCATION)
 
-MODEL_NAME = "text-bison-32k"
+MODEL_NAME = "gemini-1.5-pro-preview-0215"
+TOTAL_TOKENS = 1000000
 TEMPERATURE = 0.2
 MAX_OUTPUT_TOKENS = 8192
 TOP_P = 0.8
 TOP_K = 40
 
-SUMMARIZE_PROMPT = """Please create a summary for the TEXT TO SUMMARIZE.
+SUMMARIZE_PROMPT = """You are an intelligent policy analyst helping on determine what are the NEEDED CHANGES to be made to an EXISTING POLICY in order to implement the PROPOSED CHANGE on an an EXISTING POLICY.
+Please summarize the relevant portions of the EXISTING POLICY when explaining the NEEDED CHANGES.
+Strictly Use ONLY the following pieces of context to determine the NEEDED CHANGES for the PROPOSED CHANGE.
+Do not respond with  a summary if it is not relevant to the PROPOSED CHANGE.
 
-Combine all of the points under the followign sections
+EXISTING POLICY: 
+{policy}
 
-Commonalities in DOCUMENT 1 and DOCUMENT 2
-Contradictions in DOCUMENT 1 and DOCUMENT 2
+PROPOSED CHANGE:
+{proposal}
 
-Exclude any points that state that something is in one document but not the other.
-
-TEXT TO SUMMARIZE:
-{text}
-
-OUTPUT: 
+NEEDED CHANGES:
 """
 
-COMPARE_PROMPT = """Please compare DOCUMENT 1 to DOCUMENT 2 to list commonalities and contradictions.  These documents are portions of two larger distinct documents.  
-Summarize your findings in bulleted lists with your output organized in the following sections:
+EXTRACT_PROMPT = """You are an intelligent policy analyst helping on determine what are the NEEDED CHANGES to be made to an EXISTING POLICY in order to implement the PROPOSED CHANGE on an an EXISTING POLICY.
+Please summarize the relevant portions of the EXISTING POLICY when explaining the NEEDED CHANGES.
+Strictly Use ONLY the following pieces of context to determine the NEEDED CHANGES for the PROPOSED CHANGE.
+Do not respond with  a summary if it is not relevant to the PROPOSED CHANGE.
 
-Commonalities in DOCUMENT 1 and DOCUMENT 2
-Contradictions in DOCUMENT 1 and DOCUMENT 2
+EXISTING POLICY: 
+{policy}
 
-DOCUMENT 1: 
-{doc1}
+PROPOSED CHANGE:
+{proposal}
 
-DOCUMENT 2: 
-{doc2}
-
-OUTPUT:
+NEEDED CHANGES:
 """
+
+def run_prompt_preview(prompt):
+    vertexai.init(project=PROJECT, location=LOCATION)
+    model = GenerativeModel(MODEL_NAME)
+    responses = model.generate_content(
+        prompt,
+        generation_config={
+            "max_output_tokens": st.session_state.max_output_tokens,
+            "temperature": st.session_state.temperature,
+            "top_p": st.session_state.top_p
+        },
+        safety_settings={
+            generative_models.HarmCategory.HARM_CATEGORY_HATE_SPEECH: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            generative_models.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            generative_models.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            generative_models.HarmCategory.HARM_CATEGORY_HARASSMENT: generative_models.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        },
+        stream=True,
+    )
+    full_response = ""
+    for response in responses:
+        full_response += response.text
+
+    return full_response
 
 def run_prompt(prompt):
+    # use preview approach for preview models
+    if (MODEL_NAME in ["gemini-1.5-pro-preview-0215"]):
+        return run_prompt_preview(prompt)
     # run prompt using vertex ai
     parameters = {
         "candidate_count": 1,
@@ -82,22 +133,15 @@ def run_prompt(prompt):
     )
     return response.text
 
-def compare_text(doc1, doc2):
-    compare_prompt = st.session_state.compare_prompt
-    prompt = compare_prompt.format(doc1=doc1, doc2=doc2)
+def extract_text(policy, proposal):
+    extract_prompt = st.session_state.extract_prompt
+    prompt = extract_prompt.format(policy=policy, proposal=proposal)
     return run_prompt(prompt)
 
-def summarize(text):
+def summarize_policy(policy, proposal):
     summarize_prompt = st.session_state.summarize_prompt
-    prompt = summarize_prompt.format(text=text)
+    prompt = summarize_prompt.format(policy=policy, proposal=proposal)
     return run_prompt(prompt)
-
-def get_file_size(link):
-    # Get file size from cloud storage
-    storage_client = storage.Client()
-    bucket = storage_client.bucket(BUCKET)
-    blob = bucket.get_blob(link.replace(f"gs://{BUCKET}",""))
-    return blob.size
 
 def get_file_content(link):
     # download file from google cloud storage
@@ -111,10 +155,11 @@ def get_file_content(link):
     range = []
     p = 1
     chunk = ""
+    token_size = (TOTAL_TOKENS - st.session_state.max_output_tokens) * 4
     for page in reader.pages:
 
-        # if length of chunk is greater than 30000 characters, then add it to the list
-        if len(chunk) > 30000:
+        # if length of chunk is greater than 15000 characters, then add it to the list
+        if len(chunk) > token_size:
             chunks.append([chunk,range])
             range = []
             chunk = ""
@@ -187,7 +232,7 @@ def search_sample(
     return response
 
 def response_to_df(response):
-    
+
     df = pd.DataFrame(columns=['Id', 'Page', 'Title','Link','Snippet'])
 
     pages = tuple(search_service.SearchResponse.to_json(x) for x in response.pages)
@@ -213,20 +258,30 @@ def response_to_df(response):
 
     return [df,meta]
 
+if "showOne" not in st.session_state:
+    st.session_state.showOne = False
+if "showTwo" not in st.session_state:
+    st.session_state.showTwo = False
 
-st.title('Document Compare Helper')
-question=st.text_input("What sort of document are you looking for?")
 
-def search():
-    ss["search_response"] = search_sample(PROJECT, "global", DATASTORE, question)
-    ss["search_df"], ss["search_meta"] = response_to_df(ss["search_response"])
+st.title('Policy Helper')
+question=st.text_input("Outline your search or policy change")
 
 if question:
-    search()
+    if st.session_state.showTwo:
+        st.session_state.showOne = False
+    else:
+        st.session_state.showOne = True
+
+
+def analyze_this(link):
+    st.session_state.link = link
+    st.session_state.showOne = False
+    st.session_state.showTwo = True
 
 def back_to_results():
-    ss.doc1 = None
-    ss.doc2 = None
+    st.session_state.showOne = True
+    st.session_state.showTwo = False
 
 with st.sidebar:
     st.markdown("# Settings")
@@ -234,8 +289,8 @@ with st.sidebar:
     summarize_prompt = st.text_area("Summarize Prompt", value=SUMMARIZE_PROMPT)
     st.session_state.summarize_prompt = summarize_prompt
 
-    compare_prompt = st.text_area("Compare Prompt", value=COMPARE_PROMPT)
-    st.session_state.compare_prompt = compare_prompt
+    extract_prompt = st.text_area("Extract Prompt", value=EXTRACT_PROMPT)
+    st.session_state.extract_prompt = extract_prompt
 
     temperature = st.slider(
         "Temperature:",
@@ -256,59 +311,33 @@ with st.sidebar:
     )
     st.session_state.max_output_tokens = max_output_tokens
 
-def show_file_selection():
-    return "search_response" in ss \
-        and ("doc1" not in ss or ss["doc1"] is None) \
-        and ("doc2" not in ss or ss["doc2"] is  None)
 
-if show_file_selection():
-    df = ss["search_df"]
-    meta = ss["search_meta"]
+if st.session_state.showOne:
+
+    response2 = search_sample(PROJECT, "global", DATASTORE, question)
+    [df, meta] = response_to_df(response2)
 
     with st.expander("See results", expanded=False):
         st.dataframe(df)
 
-    rows = [row for row in df.itertuples()]
-    with st.form("file_selection"):
-        left, right = st.columns(2)
-        with left:
-            st.radio("First document to compare", 
-                        map(lambda x: x.Link, rows),
-                        key="doc1",
-                        # captions=map(lambda x: str(get_file_size(x.Link)/(1024*1024)) + " MB", rows),
-                        index=None,)
+    for row in df.itertuples():
+        st.markdown(f"# {row.Title}")
+        st.markdown(row.Snippet, unsafe_allow_html=True)
+        st.button("Analyze this", key=row.Id, on_click=analyze_this, args=(row.Link,))
+        st.divider()
         
-        with right:
-            st.radio("Second document to compare", 
-                        map(lambda x: x.Link, rows),
-                        key="doc2",
-                        # captions=map(lambda x: str(get_file_size(x.Link)/(1024*1024)) + " MB", rows),
-                        index=None,)
-        st.form_submit_button("Compare")
+if st.session_state.showTwo:
 
-def show_analysis():
-    return ("doc1" in ss and ss["doc1"] is not None) and ("doc2" in ss and ss["doc2"] is not None)
-
-if show_analysis():
     st.button( "Back", on_click=back_to_results )
 
-    doc1_chunks = []
-    doc2_chunks = []
-    
-    with st.spinner("Loading documents..."):
+    chunks = []
+    with st.spinner("Loading document..."):
+        st.markdown(f"# {st.session_state.link}")
 
-        doc1_chunks = get_file_content(st.session_state.doc1)
-        doc2_chunks = get_file_content(st.session_state.doc2)
+        chunks = get_file_content(st.session_state.link)
 
-        st.markdown(f"# {st.session_state.doc1} - {st.session_state.doc2}")
-        left, right = st.columns(2)
-        with left:
-            st.write(f"Doc: {st.session_state.doc1}")
-            st.write(f"Chunks: {len(doc1_chunks)}")
-        
-        with right:
-            st.write(f"Doc: {st.session_state.doc2}")
-            st.write(f"Chunks: {len(doc2_chunks)}")
+        st.write(f"Doc: {st.session_state.link}")
+        st.write(f"Chunks: {len(chunks)}")
 
         SLEEP_TIMEOUT = 5
     
@@ -316,28 +345,26 @@ if show_analysis():
 
     breakdown, summary = st.tabs(["Page Breakdown", "Summary"])
 
-    doc1_chunk_count = 1
-    with breakdown:
-        for chunk1 in doc1_chunks:
-            doc2_chunk_count = 1
-            text1 = chunk1[0]
-
-            for chunk2 in doc2_chunks:
-
-                with st.spinner(f"Comparing document 1 chunk #{doc1_chunk_count} - doc 2 chunk #{doc2_chunk_count}"):
-                    text2 = chunk2[0]
-                    paragraph = compare_text(text1, text2)
+    if len(chunks) > 1:
+        chunk_count = 1
+        with breakdown:
+            for chunk in chunks:
+                with st.spinner(f"Analyzing chunk #{chunk_count}"):
+                    chunk_count += 1
+                    text = chunk[0]
+                    paragraph = extract_text(text, question)
                     paragraphs.append(paragraph)
-                    st.write( "Document 1 Pages: {first} - {last}".format(first=str(chunk1[1][0]), last=str(chunk1[1][-1])) )
-                    st.write( "Document 2 Pages: {first} - {last}".format(first=str(chunk2[1][0]), last=str(chunk2[1][-1])) )
+                    st.write( "Pages: {first} - {last}".format(first=str(chunk[1][0]), last=str(chunk[1][-1])) )
                     st.write(paragraph)
                     st.divider()
-                    time.sleep(SLEEP_TIMEOUT)
-            
-                doc2_chunk_count += 1
-            doc1_chunk_count += 1
+                time.sleep(SLEEP_TIMEOUT)
+    else:
+        paragraphs.append(chunks[0])
+        with breakdown:
+            with st.spinner("Analyzing..."):
+                st.write("Summary is ready")
     
     with summary:
         with st.spinner("Analyzing..."):
-            response = summarize("\n\n".join(paragraphs))
+            response = summarize_policy("\n\n".join(paragraphs), question)
             st.write(response)
